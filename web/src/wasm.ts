@@ -1,8 +1,7 @@
 /**
- * Thin loader for the Crucible WASM module.
+ * Loader for the Crucible WASM module (ABI v2).
  *
- * Expects `crucible.wasm` (or `crucible.wasm` produced by `zig build -Dweb=true`)
- * to be present in /public after the Zig build step.
+ * Expects /crucible.wasm from: zig build -Dweb=true -Doptimize=ReleaseFast
  */
 
 export interface CrucibleModule {
@@ -13,17 +12,18 @@ export interface CrucibleModule {
   crucible_resize(width: number, height: number): void;
   crucible_shutdown(): void;
   crucible_version(): number;
+  crucible_metric_player_x(): number;
+  crucible_metric_player_z(): number;
+  crucible_metric_yaw(): number;
+  crucible_metric_speed(): number;
+  crucible_metric_in_vehicle(): number;
+  crucible_metric_draw_calls(): number;
+  crucible_metric_frame(): number;
 }
 
 export async function loadCrucible(): Promise<CrucibleModule> {
-  // Zig freestanding wasm usually needs a minimal env / memory.
-  // We start with the simplest possible instantiation; once the real
-  // backend is wired we may need a small import object for WebGL calls.
   const importObject: WebAssembly.Imports = {
-    env: {
-      // Placeholder for future JS→Zig callbacks (e.g. WebGL wrappers)
-      // abort: () => {},
-    },
+    env: {},
   };
 
   const response = await fetch("/crucible.wasm");
@@ -39,25 +39,63 @@ export async function loadCrucible(): Promise<CrucibleModule> {
     importObject
   );
 
-  const exports = instance.exports as unknown as CrucibleModule & {
-    memory?: WebAssembly.Memory;
-  };
+  const exports = instance.exports as unknown as CrucibleModule;
 
-  // Basic sanity check
   if (typeof exports.crucible_version !== "function") {
     throw new Error(
-      "WASM module loaded but crucible_version export is missing. " +
-        "Check that you built the correct target."
+      "WASM module loaded but crucible_version export is missing."
     );
   }
 
-  return {
-    crucible_init: exports.crucible_init.bind(exports),
-    crucible_frame: exports.crucible_frame.bind(exports),
-    crucible_key: exports.crucible_key.bind(exports),
-    crucible_pointer: exports.crucible_pointer.bind(exports),
-    crucible_resize: exports.crucible_resize.bind(exports),
-    crucible_shutdown: exports.crucible_shutdown.bind(exports),
-    crucible_version: exports.crucible_version.bind(exports),
+  const bind = <K extends keyof CrucibleModule>(name: K): CrucibleModule[K] => {
+    const fn = exports[name];
+    if (typeof fn !== "function") {
+      return (() => 0) as CrucibleModule[K];
+    }
+    return (fn as Function).bind(exports) as CrucibleModule[K];
   };
+
+  return {
+    crucible_init: bind("crucible_init"),
+    crucible_frame: bind("crucible_frame"),
+    crucible_key: bind("crucible_key"),
+    crucible_pointer: bind("crucible_pointer"),
+    crucible_resize: bind("crucible_resize"),
+    crucible_shutdown: bind("crucible_shutdown"),
+    crucible_version: bind("crucible_version"),
+    crucible_metric_player_x: bind("crucible_metric_player_x"),
+    crucible_metric_player_z: bind("crucible_metric_player_z"),
+    crucible_metric_yaw: bind("crucible_metric_yaw"),
+    crucible_metric_speed: bind("crucible_metric_speed"),
+    crucible_metric_in_vehicle: bind("crucible_metric_in_vehicle"),
+    crucible_metric_draw_calls: bind("crucible_metric_draw_calls"),
+    crucible_metric_frame: bind("crucible_metric_frame"),
+  };
+}
+
+/** Map KeyboardEvent to codes the Zig backend expects. */
+export function keyEventToCode(e: KeyboardEvent): number {
+  switch (e.code) {
+    case "KeyW":
+      return 87;
+    case "KeyA":
+      return 65;
+    case "KeyS":
+      return 83;
+    case "KeyD":
+      return 68;
+    case "KeyE":
+      return 69;
+    case "KeyF":
+      return 70;
+    case "ShiftLeft":
+    case "ShiftRight":
+      return 16;
+    case "Escape":
+      return 27;
+    case "Space":
+      return 32;
+    default:
+      return e.keyCode || 0;
+  }
 }
