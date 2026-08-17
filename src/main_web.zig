@@ -1,31 +1,24 @@
 //! Crucible — WASM entry for the Empire & Kin browser tester.
 //!
-//! Exports a stable C ABI for the React host. Internally drives a
-//! Backend-VTable-compatible Web backend and a minimal demo loop that
-//! exercises input → camera → draw path (player proxy + ground + vehicle).
-//!
-//! When the empire-and-kin submodule is linked, replace the demo loop
-//! with the real session_run.
+//! Drives Backend VTable + Phase 5 vehicle_phys (ported drive slice).
+//! Full session_run is still a stub upstream; when assembled, swap this
+//! loop for the real session.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const web = @import("web_backend.zig");
+const phys = @import("vehicle_phys_slice.zig");
 
 var gfx: web.Backend = undefined;
 var inited: bool = false;
 
-// Demo world (stand-in until full session is linked)
 var player_x: f32 = 0;
 var player_z: f32 = 0;
 var player_yaw: f32 = 0;
-var in_vehicle: bool = false;
-var veh_vx: f32 = 0;
-var veh_vz: f32 = 0;
-var veh_yaw: f32 = 0;
-var veh_pitch: f32 = 0;
-var veh_roll: f32 = 0;
-var wheel_spin: f32 = 0;
+var on_foot: bool = true;
+var vehicle: phys.Vehicle = .{};
 var e_was_down: bool = false;
+var f_was_down: bool = false;
 
 export fn crucible_init(width: i32, height: i32) void {
     gfx = web.getBackend();
@@ -36,13 +29,10 @@ export fn crucible_init(width: i32, height: i32) void {
     player_x = 0;
     player_z = 0;
     player_yaw = 0;
-    in_vehicle = false;
-    veh_vx = 0;
-    veh_vz = 0;
-    veh_yaw = 0;
-    veh_pitch = 0;
-    veh_roll = 0;
+    on_foot = true;
+    vehicle = phys.spawn(.sedan, 4, 2);
     e_was_down = false;
+    f_was_down = false;
 }
 
 export fn crucible_frame(dt: f32) void {
@@ -56,66 +46,72 @@ export fn crucible_frame(dt: f32) void {
 
     const e_edge = input.interact and !e_was_down;
     e_was_down = input.interact;
+    const f_edge = input.attack and !f_was_down;
+    f_was_down = input.attack;
 
-    if (!in_vehicle) {
+    if (f_edge and on_foot) {
+        vehicle.vtype = switch (vehicle.vtype) {
+            .sedan => .taxi,
+            .taxi => .truck,
+            .truck => .motorcycle,
+            .motorcycle => .sedan,
+        };
+        const t = phys.tuningFor(vehicle.vtype);
+        vehicle.body_y = t.rest_len;
+        vehicle.max_speed = switch (vehicle.vtype) {
+            .sedan => 16.0,
+            .truck => 11.0,
+            .motorcycle => 20.0,
+            .taxi => 15.0,
+        };
+    }
+
+    if (on_foot) {
         const speed: f32 = 6.0;
         player_x += input.move_x * speed * d;
         player_z += input.move_y * speed * d;
         if (input.move_x != 0 or input.move_y != 0) {
-            player_yaw = std.math.atan2(input.move_x, input.move_y);
+            player_yaw = std.math.atan2(input.move_y, input.move_x);
         }
         if (e_edge) {
-            in_vehicle = true;
-            veh_yaw = player_yaw;
-            web.in_vehicle_hint = true;
+            const dx = player_x - vehicle.x;
+            const dz = player_z - vehicle.z;
+            if (dx * dx + dz * dz < 16.0) {
+                on_foot = false;
+                vehicle.occupied = true;
+                vehicle.yaw = player_yaw;
+                web.in_vehicle_hint = true;
+            }
         }
     } else {
-        const throttle = input.move_y;
-        const steer = input.move_x;
-        const accel: f32 = if (input.handbrake) 4.0 else 12.0;
-        const drag: f32 = if (input.handbrake) 0.92 else 0.98;
-
-        const forward_x = @sin(veh_yaw);
-        const forward_z = @cos(veh_yaw);
-        veh_vx += forward_x * throttle * accel * d;
-        veh_vz += forward_z * throttle * accel * d;
-        veh_vx *= drag;
-        veh_vz *= drag;
-
-        const speed = @sqrt(veh_vx * veh_vx + veh_vz * veh_vz);
-        if (speed > 0.5) {
-            veh_yaw += steer * 1.8 * d * @min(speed / 8.0, 1.0);
-            if (input.handbrake) {
-                veh_yaw += steer * 2.5 * d;
-                veh_roll = std.math.clamp(veh_roll + steer * 0.8 * d, -0.35, 0.35);
-            } else {
-                veh_roll *= 0.9;
-            }
-        } else {
-            veh_roll *= 0.9;
-        }
-        veh_pitch = std.math.clamp(throttle * 0.08, -0.12, 0.12);
-        wheel_spin += speed * 4.0 * d;
-
-        player_x += veh_vx * d;
-        player_z += veh_vz * d;
+        const mapped = phys.inputsFromMove(input.move_x, input.move_y);
+        phys.integrate(&vehicle, mapped.throttle, mapped.steer, input.handbrake, dtf);
+        player_x = vehicle.x;
+        player_z = vehicle.z;
+        player_yaw = vehicle.yaw;
 
         if (e_edge) {
-            in_vehicle = false;
-            veh_vx = 0;
-            veh_vz = 0;
+            on_foot = true;
+            vehicle.occupied = false;
+            vehicle.vx = 0;
+            vehicle.vz = 0;
+            vehicle.yaw_rate = 0;
+            vehicle.steer = 0;
+            vehicle.speed = 0;
             web.in_vehicle_hint = false;
+            player_x += @cos(vehicle.yaw + 1.57) * 1.5;
+            player_z += @sin(vehicle.yaw + 1.57) * 1.5;
         }
     }
 
-    const yaw = if (in_vehicle) veh_yaw else player_yaw;
-    const cam_dist: f32 = 16;
-    const cam_height: f32 = 12;
+    const yaw = if (on_foot) player_yaw else vehicle.yaw;
+    const cam_dist: f32 = if (on_foot) 14.0 else 16.0;
+    const cam_height: f32 = if (on_foot) 10.0 else 12.0;
     gfx.setCamera(.{
         .position = .{
-            .x = player_x - @sin(yaw) * cam_dist,
+            .x = player_x - @cos(yaw) * cam_dist,
             .y = cam_height,
-            .z = player_z - @cos(yaw) * cam_dist,
+            .z = player_z - @sin(yaw) * cam_dist,
         },
         .target = .{ .x = player_x, .y = 1, .z = player_z },
         .up = .{ .x = 0, .y = 1, .z = 0 },
@@ -128,26 +124,27 @@ export fn crucible_frame(dt: f32) void {
     _ = gfx.drawBuilding(.{ .x = -14, .y = 0, .z = 10 }, 5, 14, 5, web.Color.rgb(70, 75, 90));
     _ = gfx.drawBuilding(.{ .x = 8, .y = 0, .z = -12 }, 8, 8, 7, web.Color.rgb(100, 85, 70));
 
-    if (in_vehicle) {
-        _ = gfx.drawVehicle(
-            .{ .x = player_x, .y = 0.5, .z = player_z },
-            veh_yaw,
-            veh_pitch,
-            veh_roll,
-            wheel_spin,
-            0,
-            100,
-            web.Color.rgb(180, 40, 40),
-        );
-    } else {
+    const body_y = if (vehicle.occupied) vehicle.body_y else phys.tuningFor(vehicle.vtype).rest_len;
+    _ = gfx.drawVehicle(
+        .{ .x = vehicle.x, .y = body_y, .z = vehicle.z },
+        vehicle.yaw,
+        if (vehicle.occupied) vehicle.pitch else 0,
+        if (vehicle.occupied) vehicle.roll else 0,
+        vehicle.wheel_spin,
+        vehicle.steer,
+        vehicle.health,
+        web.Color.rgb(180, 40, 40),
+    );
+
+    if (on_foot) {
         gfx.drawPlayerProxy(.{ .x = player_x, .y = 0, .z = player_z }, player_yaw, web.Color.rgb(80, 180, 120));
     }
 
-    gfx.drawText("CRUCIBLE", 12, 20, web.Color.rgb(201, 162, 39));
-    if (in_vehicle) {
-        gfx.drawText("IN VEHICLE  Shift=handbrake  E=exit", 12, 44, web.Color.rgb(200, 200, 210));
+    gfx.drawText("CRUCIBLE · Phase 5 phys", 12, 20, web.Color.rgb(201, 162, 39));
+    if (on_foot) {
+        gfx.drawText("WASD walk  E enter  F cycle type", 12, 44, web.Color.rgb(180, 190, 200));
     } else {
-        gfx.drawText("WASD move  E=enter vehicle", 12, 44, web.Color.rgb(180, 190, 200));
+        gfx.drawText("WASD drive  Shift handbrake  E exit", 12, 44, web.Color.rgb(200, 200, 210));
     }
 
     gfx.endFrame();
@@ -173,7 +170,7 @@ export fn crucible_shutdown() void {
 }
 
 export fn crucible_version() i32 {
-    return 3;
+    return 4;
 }
 
 export fn crucible_metric_player_x() f32 {
@@ -183,14 +180,13 @@ export fn crucible_metric_player_z() f32 {
     return player_z;
 }
 export fn crucible_metric_yaw() f32 {
-    return if (in_vehicle) veh_yaw else player_yaw;
+    return if (on_foot) player_yaw else vehicle.yaw;
 }
 export fn crucible_metric_speed() f32 {
-    if (!in_vehicle) return 0;
-    return @sqrt(veh_vx * veh_vx + veh_vz * veh_vz);
+    return if (on_foot) 0 else vehicle.speed;
 }
 export fn crucible_metric_in_vehicle() i32 {
-    return if (in_vehicle) 1 else 0;
+    return if (on_foot) 0 else 1;
 }
 export fn crucible_metric_draw_calls() i32 {
     return @intCast(web.getDrawCalls());
@@ -198,24 +194,29 @@ export fn crucible_metric_draw_calls() i32 {
 export fn crucible_metric_frame() i32 {
     return @intCast(web.getFrameCount());
 }
-
 export fn crucible_metric_pitch() f32 {
-    return if (in_vehicle) veh_pitch else 0;
+    return if (on_foot) 0 else vehicle.pitch;
 }
 export fn crucible_metric_roll() f32 {
-    return if (in_vehicle) veh_roll else 0;
+    return if (on_foot) 0 else vehicle.roll;
+}
+export fn crucible_metric_vtype() i32 {
+    return @intFromEnum(vehicle.vtype);
+}
+export fn crucible_metric_health() i32 {
+    return vehicle.health;
 }
 
 export fn crucible_cam_px() f32 {
-    const yaw = if (in_vehicle) veh_yaw else player_yaw;
-    return player_x - @sin(yaw) * 16.0;
+    const yaw = if (on_foot) player_yaw else vehicle.yaw;
+    return player_x - @cos(yaw) * 16.0;
 }
 export fn crucible_cam_py() f32 {
     return 12.0;
 }
 export fn crucible_cam_pz() f32 {
-    const yaw = if (in_vehicle) veh_yaw else player_yaw;
-    return player_z - @cos(yaw) * 16.0;
+    const yaw = if (on_foot) player_yaw else vehicle.yaw;
+    return player_z - @sin(yaw) * 16.0;
 }
 export fn crucible_cam_tx() f32 {
     return player_x;
@@ -229,5 +230,5 @@ export fn crucible_cam_tz() f32 {
 
 pub fn main() void {
     if (builtin.os.tag == .freestanding) return;
-    std.debug.print("Crucible — build with -Dweb=true for WASM (ABI v3 + WebGL host)\n", .{});
+    std.debug.print("Crucible — Phase 5 vehicle_phys slice (ABI v4)\n", .{});
 }
