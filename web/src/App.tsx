@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { loadCrucible, type CrucibleModule } from "./wasm";
+import { loadCrucible, keyEventToCode, type CrucibleModule } from "./wasm";
 
 type Status = "idle" | "loading" | "ready" | "error";
 
@@ -8,17 +8,21 @@ export function App() {
   const moduleRef = useRef<CrucibleModule | null>(null);
   const rafRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
+  const metricTickRef = useRef<number>(0);
 
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [fps, setFps] = useState(0);
   const [version, setVersion] = useState<number | null>(null);
 
-  // Simple live metrics (will be fed from real game state later)
   const [metrics, setMetrics] = useState({
     inVehicle: false,
     speed: 0,
     yaw: 0,
+    x: 0,
+    z: 0,
+    drawCalls: 0,
+    frame: 0,
   });
 
   const startLoop = useCallback((mod: CrucibleModule) => {
@@ -27,9 +31,20 @@ export function App() {
       lastTimeRef.current = t;
 
       mod.crucible_frame(dt);
-
-      // Rough FPS
       setFps((prev) => prev * 0.9 + (1 / Math.max(dt, 0.001)) * 0.1);
+
+      metricTickRef.current += 1;
+      if (metricTickRef.current % 6 === 0) {
+        setMetrics({
+          inVehicle: mod.crucible_metric_in_vehicle() !== 0,
+          speed: mod.crucible_metric_speed(),
+          yaw: mod.crucible_metric_yaw(),
+          x: mod.crucible_metric_player_x(),
+          z: mod.crucible_metric_player_z(),
+          drawCalls: mod.crucible_metric_draw_calls(),
+          frame: mod.crucible_metric_frame(),
+        });
+      }
 
       rafRef.current = requestAnimationFrame(loop);
     };
@@ -42,13 +57,16 @@ export function App() {
     setError(null);
 
     try {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      moduleRef.current?.crucible_shutdown();
+
       const mod = await loadCrucible();
       moduleRef.current = mod;
 
       const canvas = canvasRef.current;
       const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width * devicePixelRatio;
-      canvas.height = rect.height * devicePixelRatio;
+      canvas.width = Math.max(1, Math.floor(rect.width * devicePixelRatio));
+      canvas.height = Math.max(1, Math.floor(rect.height * devicePixelRatio));
 
       mod.crucible_init(canvas.width, canvas.height);
       setVersion(mod.crucible_version());
@@ -62,24 +80,21 @@ export function App() {
   }, [startLoop]);
 
   useEffect(() => {
-    // Auto-attempt load when the page is ready.
-    // If crucible.wasm is missing the error state will show a clear message.
     init();
-
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       moduleRef.current?.crucible_shutdown();
     };
   }, [init]);
 
-  // Keyboard → WASM
   useEffect(() => {
     const onKey = (e: KeyboardEvent, down: boolean) => {
       const mod = moduleRef.current;
       if (!mod || status !== "ready") return;
-      // Simple key mapping; will be expanded to match Empire & Kin controls
-      const code = e.code.charCodeAt(0); // placeholder
-      mod.crucible_key(code, down ? 1 : 0);
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyE", "KeyF", "Space"].includes(e.code)) {
+        e.preventDefault();
+      }
+      mod.crucible_key(keyEventToCode(e), down ? 1 : 0);
     };
     const down = (e: KeyboardEvent) => onKey(e, true);
     const up = (e: KeyboardEvent) => onKey(e, false);
@@ -91,7 +106,6 @@ export function App() {
     };
   }, [status]);
 
-  // Pointer → WASM
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -140,13 +154,38 @@ export function App() {
                 <p style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>
                   {error}
                 </p>
-                <p style={{ fontSize: "0.8rem", marginTop: "1rem", color: "var(--muted)" }}>
-                  Build the WASM first:<br />
+                <p
+                  style={{
+                    fontSize: "0.8rem",
+                    marginTop: "1rem",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Build the WASM first:
+                  <br />
                   <code>zig build -Dweb=true -Doptimize=ReleaseFast</code>
                 </p>
               </div>
             )}
             {status === "idle" && <p>Waiting…</p>}
+          </div>
+        )}
+        {status === "ready" && (
+          <div
+            className="overlay"
+            style={{
+              pointerEvents: "none",
+              background: "transparent",
+              alignItems: "flex-end",
+              justifyContent: "flex-start",
+              padding: "1rem",
+            }}
+          >
+            <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: 0 }}>
+              Demo loop active — draw is command-recorded (WebGL fill next).
+              <br />
+              WASD · E enter/exit · Shift handbrake
+            </p>
           </div>
         )}
       </div>
@@ -166,6 +205,12 @@ export function App() {
               FPS <strong>{fps.toFixed(0)}</strong>
             </div>
             <div>
+              Frame <strong>{metrics.frame}</strong>
+            </div>
+            <div>
+              Draw calls <strong>{metrics.drawCalls}</strong>
+            </div>
+            <div>
               In vehicle <strong>{metrics.inVehicle ? "yes" : "no"}</strong>
             </div>
             <div>
@@ -173,6 +218,11 @@ export function App() {
             </div>
             <div>
               Yaw <strong>{metrics.yaw.toFixed(2)}</strong>
+            </div>
+            <div>
+              Pos <strong>
+                {metrics.x.toFixed(1)}, {metrics.z.toFixed(1)}
+              </strong>
             </div>
           </div>
         </section>
@@ -192,17 +242,18 @@ export function App() {
             <input type="range" min="0" max="2" step="0.05" defaultValue="1" />
           </label>
           <p style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-            Live tuning will wire to PhysTuning once the full game is linked.
+            Live PhysTuning when full vehicle_phys is linked.
           </p>
         </section>
 
         <section>
           <h2>Controls</h2>
           <div className="metrics">
-            WASD · drive / move<br />
-            Shift · handbrake<br />
-            E · enter / exit<br />
-            Q/E · orbit · [ ] zoom
+            WASD · move / drive
+            <br />
+            Shift · handbrake
+            <br />
+            E · enter / exit vehicle
           </div>
         </section>
       </aside>
