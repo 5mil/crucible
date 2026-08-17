@@ -1,0 +1,4 @@
+[submodule "vendor/empire-and-kin"]
+	path = vendor/empire-and-kin
+	url = https://github.com/5mil/empire-and-kin.git
+	branch = main

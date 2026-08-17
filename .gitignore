@@ -1,0 +1,23 @@
+# Zig
+.zig-cache/
+zig-out/
+*.o
+*.a
+*.so
+*.wasm
+
+# Node / web
+web/node_modules/
+web/dist/
+web/.vite/
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+*.log
+
+# Submodule working tree (we track the pin, not local changes)
+# vendor/ is managed by git submodule
