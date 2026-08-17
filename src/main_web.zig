@@ -54,7 +54,6 @@ export fn crucible_frame(dt: f32) void {
     gfx.beginFrame();
     const input = gfx.pollInput();
 
-    // Edge-trigger E for enter/exit
     const e_edge = input.interact and !e_was_down;
     e_was_down = input.interact;
 
@@ -174,7 +173,7 @@ export fn crucible_shutdown() void {
 }
 
 export fn crucible_version() i32 {
-    return 2;
+    return 3;
 }
 
 export fn crucible_metric_player_x() f32 {
@@ -200,7 +199,35 @@ export fn crucible_metric_frame() i32 {
     return @intCast(web.getFrameCount());
 }
 
+export fn crucible_metric_pitch() f32 {
+    return if (in_vehicle) veh_pitch else 0;
+}
+export fn crucible_metric_roll() f32 {
+    return if (in_vehicle) veh_roll else 0;
+}
+
+export fn crucible_cam_px() f32 {
+    const yaw = if (in_vehicle) veh_yaw else player_yaw;
+    return player_x - @sin(yaw) * 16.0;
+}
+export fn crucible_cam_py() f32 {
+    return 12.0;
+}
+export fn crucible_cam_pz() f32 {
+    const yaw = if (in_vehicle) veh_yaw else player_yaw;
+    return player_z - @cos(yaw) * 16.0;
+}
+export fn crucible_cam_tx() f32 {
+    return player_x;
+}
+export fn crucible_cam_ty() f32 {
+    return 1.0;
+}
+export fn crucible_cam_tz() f32 {
+    return player_z;
+}
+
 pub fn main() void {
     if (builtin.os.tag == .freestanding) return;
-    std.debug.print("Crucible — build with -Dweb=true for WASM (ABI v2 demo loop)\n", .{});
+    std.debug.print("Crucible — build with -Dweb=true for WASM (ABI v3 + WebGL host)\n", .{});
 }
