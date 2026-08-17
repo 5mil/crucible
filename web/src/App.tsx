@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { loadCrucible, keyEventToCode, type CrucibleModule } from "./wasm";
+import {
+  loadCrucible,
+  keyEventToCode,
+  snapshotFromModule,
+  type CrucibleModule,
+} from "./wasm";
+import { GlRenderer } from "./gl/renderer";
 
 type Status = "idle" | "loading" | "ready" | "error";
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const moduleRef = useRef<CrucibleModule | null>(null);
+  const glRef = useRef<GlRenderer | null>(null);
   const rafRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
   const metricTickRef = useRef<number>(0);
@@ -31,6 +38,12 @@ export function App() {
       lastTimeRef.current = t;
 
       mod.crucible_frame(dt);
+
+      const gl = glRef.current;
+      if (gl) {
+        gl.render(snapshotFromModule(mod));
+      }
+
       setFps((prev) => prev * 0.9 + (1 / Math.max(dt, 0.001)) * 0.1);
 
       metricTickRef.current += 1;
@@ -59,14 +72,20 @@ export function App() {
     try {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       moduleRef.current?.crucible_shutdown();
-
-      const mod = await loadCrucible();
-      moduleRef.current = mod;
+      glRef.current?.destroy();
+      glRef.current = null;
 
       const canvas = canvasRef.current;
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.max(1, Math.floor(rect.width * devicePixelRatio));
       canvas.height = Math.max(1, Math.floor(rect.height * devicePixelRatio));
+
+      const renderer = new GlRenderer(canvas);
+      renderer.resize(canvas.width, canvas.height);
+      glRef.current = renderer;
+
+      const mod = await loadCrucible();
+      moduleRef.current = mod;
 
       mod.crucible_init(canvas.width, canvas.height);
       setVersion(mod.crucible_version());
@@ -84,8 +103,27 @@ export function App() {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       moduleRef.current?.crucible_shutdown();
+      glRef.current?.destroy();
     };
   }, [init]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ro = new ResizeObserver(() => {
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.max(1, Math.floor(rect.width * devicePixelRatio));
+      const h = Math.max(1, Math.floor(rect.height * devicePixelRatio));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        glRef.current?.resize(w, h);
+        moduleRef.current?.crucible_resize(w, h);
+      }
+    });
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent, down: boolean) => {
@@ -134,9 +172,9 @@ export function App() {
         <span className="status">
           Empire & Kin browser tester ·{" "}
           {status === "ready"
-            ? `ready (ABI v${version})`
+            ? `ready (ABI v${version}) · WebGL2`
             : status === "loading"
-              ? "loading WASM…"
+              ? "loading…"
               : status === "error"
                 ? "error"
                 : "idle"}
@@ -147,45 +185,21 @@ export function App() {
         <canvas ref={canvasRef} tabIndex={0} />
         {status !== "ready" && (
           <div className="overlay">
-            {status === "loading" && <p>Loading crucible.wasm…</p>}
+            {status === "loading" && <p>Loading WASM + WebGL…</p>}
             {status === "error" && (
               <div>
-                <p style={{ color: "var(--danger)" }}>Failed to load module</p>
-                <p style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>
-                  {error}
-                </p>
-                <p
-                  style={{
-                    fontSize: "0.8rem",
-                    marginTop: "1rem",
-                    color: "var(--muted)",
-                  }}
-                >
-                  Build the WASM first:
+                <p style={{ color: "var(--danger)" }}>Failed to start</p>
+                <p style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>{error}</p>
+                <p style={{ fontSize: "0.8rem", marginTop: "1rem", color: "var(--muted)" }}>
+                  Need Zig 0.14 WASM build:
                   <br />
                   <code>zig build -Dweb=true -Doptimize=ReleaseFast</code>
+                  <br />
+                  then place <code>crucible.wasm</code> in <code>web/public/</code>
                 </p>
               </div>
             )}
             {status === "idle" && <p>Waiting…</p>}
-          </div>
-        )}
-        {status === "ready" && (
-          <div
-            className="overlay"
-            style={{
-              pointerEvents: "none",
-              background: "transparent",
-              alignItems: "flex-end",
-              justifyContent: "flex-start",
-              padding: "1rem",
-            }}
-          >
-            <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: 0 }}>
-              Demo loop active — draw is command-recorded (WebGL fill next).
-              <br />
-              WASD · E enter/exit · Shift handbrake
-            </p>
           </div>
         )}
       </div>
@@ -220,30 +234,12 @@ export function App() {
               Yaw <strong>{metrics.yaw.toFixed(2)}</strong>
             </div>
             <div>
-              Pos <strong>
+              Pos{" "}
+              <strong>
                 {metrics.x.toFixed(1)}, {metrics.z.toFixed(1)}
               </strong>
             </div>
           </div>
-        </section>
-
-        <section>
-          <h2>Physics (preview)</h2>
-          <label>
-            Lateral grip
-            <input type="range" min="0" max="2" step="0.05" defaultValue="1" />
-          </label>
-          <label>
-            Handbrake strength
-            <input type="range" min="0" max="2" step="0.05" defaultValue="1" />
-          </label>
-          <label>
-            Spring stiffness
-            <input type="range" min="0" max="2" step="0.05" defaultValue="1" />
-          </label>
-          <p style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-            Live PhysTuning when full vehicle_phys is linked.
-          </p>
         </section>
 
         <section>
