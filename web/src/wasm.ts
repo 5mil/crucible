@@ -1,5 +1,5 @@
 /**
- * Loader for the Crucible WASM module (ABI v2).
+ * Loader for the Crucible WASM module (ABI v3).
  *
  * Expects /crucible.wasm from: zig build -Dweb=true -Doptimize=ReleaseFast
  */
@@ -19,6 +19,14 @@ export interface CrucibleModule {
   crucible_metric_in_vehicle(): number;
   crucible_metric_draw_calls(): number;
   crucible_metric_frame(): number;
+  crucible_metric_pitch(): number;
+  crucible_metric_roll(): number;
+  crucible_cam_px(): number;
+  crucible_cam_py(): number;
+  crucible_cam_pz(): number;
+  crucible_cam_tx(): number;
+  crucible_cam_ty(): number;
+  crucible_cam_tz(): number;
 }
 
 export async function loadCrucible(): Promise<CrucibleModule> {
@@ -70,6 +78,14 @@ export async function loadCrucible(): Promise<CrucibleModule> {
     crucible_metric_in_vehicle: bind("crucible_metric_in_vehicle"),
     crucible_metric_draw_calls: bind("crucible_metric_draw_calls"),
     crucible_metric_frame: bind("crucible_metric_frame"),
+    crucible_metric_pitch: bind("crucible_metric_pitch"),
+    crucible_metric_roll: bind("crucible_metric_roll"),
+    crucible_cam_px: bind("crucible_cam_px"),
+    crucible_cam_py: bind("crucible_cam_py"),
+    crucible_cam_pz: bind("crucible_cam_pz"),
+    crucible_cam_tx: bind("crucible_cam_tx"),
+    crucible_cam_ty: bind("crucible_cam_ty"),
+    crucible_cam_tz: bind("crucible_cam_tz"),
   };
 }
 
@@ -98,4 +114,23 @@ export function keyEventToCode(e: KeyboardEvent): number {
     default:
       return e.keyCode || 0;
   }
+}
+
+export function snapshotFromModule(mod: CrucibleModule) {
+  return {
+    playerX: mod.crucible_metric_player_x(),
+    playerZ: mod.crucible_metric_player_z(),
+    yaw: mod.crucible_metric_yaw(),
+    pitch: mod.crucible_metric_pitch(),
+    roll: mod.crucible_metric_roll(),
+    inVehicle: mod.crucible_metric_in_vehicle() !== 0,
+    cam: {
+      px: mod.crucible_cam_px(),
+      py: mod.crucible_cam_py(),
+      pz: mod.crucible_cam_pz(),
+      tx: mod.crucible_cam_tx(),
+      ty: mod.crucible_cam_ty(),
+      tz: mod.crucible_cam_tz(),
+    },
+  };
 }

@@ -32,12 +32,25 @@ Browser
                       └─ Empire & Kin session_run + game + vehicle_phys
 ```
 
+## Rendering path (ABI v3)
+
+```
+WASM demo loop / session
+  → metrics + camera exports each frame
+       → JS GlRenderer (WebGL2)
+            → ground, buildings, player/vehicle boxes
+```
+
+Zig still issues draws through the Backend VTable (counted). Pixels are
+produced on the JS side from the scene snapshot so freestanding WASM works
+without WebGL imports.
+
 ## Next Implementation Steps
 
-1. Flesh out `web_backend.zig` so it can clear a canvas and draw a simple test mesh via WebGL2 (JS interop or pure WASM WebGL bindings).
+1. ~~WebGL triangles on canvas~~ (done — JS WebGL2 host)
 2. Wire the real `session_run` and game modules from the submodule into the WASM build.
-3. Map Empire & Kin controls (WASD, Shift handbrake, E enter/exit, etc.) cleanly.
-4. Expose selected `PhysTuning` fields and vehicle state back to the React panel for live inspection/tuning.
+3. Optional: pure-WASM WebGL via importObject for GLES parity.
+4. Expose selected `PhysTuning` fields for live tuning in the React panel.
 5. Add frame-step, pause, and basic input recording/replay.
 
 ## Constraints Inherited from Empire & Kin
