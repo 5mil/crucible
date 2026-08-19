@@ -1,4 +1,4 @@
-/** Loader for Crucible WASM (ABI v5 — full vertical slice). */
+/** Loader for Crucible WASM (ABI v6). */
 
 export interface CrucibleModule {
   crucible_init(width: number, height: number): void;
@@ -24,6 +24,7 @@ export interface CrucibleModule {
   crucible_metric_day(): number;
   crucible_metric_clock(): number;
   crucible_metric_respect(): number;
+  crucible_metric_district(): number;
   crucible_cam_px(): number;
   crucible_cam_py(): number;
   crucible_cam_pz(): number;
@@ -62,6 +63,12 @@ export interface CrucibleModule {
   crucible_mk_z(i: number): number;
   crucible_mk_kind(i: number): number;
   crucible_mk_active(i: number): number;
+  crucible_load_state(
+    district: number, on_foot: number, hp: number, heat: number,
+    treasury: number, respect: number, day: number, clock: number,
+    x: number, z: number, yaw: number
+  ): void;
+  crucible_travel(district: number): void;
 }
 
 function bindAll(exports: Record<string, unknown>): CrucibleModule {
@@ -70,23 +77,24 @@ function bindAll(exports: Record<string, unknown>): CrucibleModule {
     if (typeof fn !== "function") return (() => 0) as never;
     return (fn as Function).bind(exports) as never;
   };
-  const names = Object.keys({
-    crucible_init: 1, crucible_frame: 1, crucible_key: 1, crucible_pointer: 1, crucible_resize: 1,
-    crucible_shutdown: 1, crucible_version: 1, crucible_metric_player_x: 1, crucible_metric_player_z: 1,
-    crucible_metric_yaw: 1, crucible_metric_speed: 1, crucible_metric_in_vehicle: 1, crucible_metric_draw_calls: 1,
-    crucible_metric_frame: 1, crucible_metric_pitch: 1, crucible_metric_roll: 1, crucible_metric_vtype: 1,
-    crucible_metric_health: 1, crucible_metric_heat: 1, crucible_metric_treasury: 1, crucible_metric_day: 1,
-    crucible_metric_clock: 1, crucible_metric_respect: 1, crucible_cam_px: 1, crucible_cam_py: 1, crucible_cam_pz: 1,
-    crucible_cam_tx: 1, crucible_cam_ty: 1, crucible_cam_tz: 1, crucible_scene_buildings: 1, crucible_scene_peds: 1,
-    crucible_scene_traffic: 1, crucible_scene_vehicles: 1, crucible_scene_markers: 1, crucible_bld_x: 1, crucible_bld_z: 1,
-    crucible_bld_w: 1, crucible_bld_h: 1, crucible_bld_d: 1, crucible_bld_r: 1, crucible_bld_g: 1, crucible_bld_b: 1,
-    crucible_ped_x: 1, crucible_ped_z: 1, crucible_ped_yaw: 1, crucible_tr_x: 1, crucible_tr_z: 1, crucible_tr_yaw: 1,
-    crucible_tr_r: 1, crucible_tr_g: 1, crucible_tr_b: 1, crucible_veh_x: 1, crucible_veh_z: 1, crucible_veh_yaw: 1,
-    crucible_veh_pitch: 1, crucible_veh_roll: 1, crucible_veh_occupied: 1, crucible_mk_x: 1, crucible_mk_z: 1,
-    crucible_mk_kind: 1, crucible_mk_active: 1,
-  });
+  const keys = [
+    "crucible_init","crucible_frame","crucible_key","crucible_pointer","crucible_resize",
+    "crucible_shutdown","crucible_version","crucible_metric_player_x","crucible_metric_player_z",
+    "crucible_metric_yaw","crucible_metric_speed","crucible_metric_in_vehicle","crucible_metric_draw_calls",
+    "crucible_metric_frame","crucible_metric_pitch","crucible_metric_roll","crucible_metric_vtype",
+    "crucible_metric_health","crucible_metric_heat","crucible_metric_treasury","crucible_metric_day",
+    "crucible_metric_clock","crucible_metric_respect","crucible_metric_district","crucible_cam_px",
+    "crucible_cam_py","crucible_cam_pz","crucible_cam_tx","crucible_cam_ty","crucible_cam_tz",
+    "crucible_scene_buildings","crucible_scene_peds","crucible_scene_traffic","crucible_scene_vehicles",
+    "crucible_scene_markers","crucible_bld_x","crucible_bld_z","crucible_bld_w","crucible_bld_h",
+    "crucible_bld_d","crucible_bld_r","crucible_bld_g","crucible_bld_b","crucible_ped_x","crucible_ped_z",
+    "crucible_ped_yaw","crucible_tr_x","crucible_tr_z","crucible_tr_yaw","crucible_tr_r","crucible_tr_g",
+    "crucible_tr_b","crucible_veh_x","crucible_veh_z","crucible_veh_yaw","crucible_veh_pitch",
+    "crucible_veh_roll","crucible_veh_occupied","crucible_mk_x","crucible_mk_z","crucible_mk_kind",
+    "crucible_mk_active","crucible_load_state","crucible_travel",
+  ];
   const out: Record<string, unknown> = {};
-  for (const n of names) out[n] = bind(n);
+  for (const n of keys) out[n] = bind(n);
   return out as unknown as CrucibleModule;
 }
 
