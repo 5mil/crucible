@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  web:
+    name: Web (Vite)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: npm install
+      - name: Build
+        run: npm run build
+
+  wasm:
+    name: Zig WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Zig 0.14
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: Build crucible.wasm
+        run: zig build -Dweb=true -Doptimize=ReleaseFast
+      - name: Locate and stage WASM
+        run: |
+          set -e
+          echo "Searching for .wasm artifacts..."
+          find zig-out -type f -name "*.wasm" 2>/dev/null || true
+          if [ -f web/public/crucible.wasm ]; then
+            echo "Found web/public/crucible.wasm"
+          elif [ -f zig-out/lib/crucible.wasm ]; then
+            mkdir -p web/public
+            cp zig-out/lib/crucible.wasm web/public/crucible.wasm
+          else
+            WASM=$(find zig-out -name "*.wasm" -type f | head -1)
+            if [ -n "$WASM" ]; then
+              mkdir -p web/public
+              cp "$WASM" web/public/crucible.wasm
+              echo "Copied $WASM -> web/public/crucible.wasm"
+            else
+              echo "ERROR: no wasm produced"
+              ls -laR zig-out || true
+              exit 1
+            fi
+          fi
+          ls -la web/public/crucible.wasm
+      - name: Upload crucible.wasm
+        uses: actions/upload-artifact@v4
+        with:
+          name: crucible-wasm
+          path: web/public/crucible.wasm
+          if-no-files-found: error
+
+  publish-wasm:
+    name: Publish WASM to web/public
+    needs: wasm
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: crucible-wasm
+          path: web/public
+      - name: Commit wasm if changed
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add web/public/crucible.wasm
+          if git diff --staged --quiet; then
+            echo "No wasm changes"
+          else
+            git commit -m "ci: update crucible.wasm (session_slice)"
+            git push
+          fi
