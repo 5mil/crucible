@@ -24,7 +24,7 @@ jobs:
         run: npm run build
 
   wasm:
-    name: Zig WASM
+    name: Zig WASM (session_slice)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,15 +41,18 @@ jobs:
           set -e
           echo "Searching for .wasm artifacts..."
           find zig-out -type f -name "*.wasm" 2>/dev/null || true
+          mkdir -p web/public
           if [ -f web/public/crucible.wasm ]; then
-            echo "Found web/public/crucible.wasm"
+            echo "Already at web/public/crucible.wasm"
+          elif [ -f zig-out/web/public/crucible.wasm ]; then
+            cp zig-out/web/public/crucible.wasm web/public/crucible.wasm
+          elif [ -f zig-out/bin/crucible.wasm ]; then
+            cp zig-out/bin/crucible.wasm web/public/crucible.wasm
           elif [ -f zig-out/lib/crucible.wasm ]; then
-            mkdir -p web/public
             cp zig-out/lib/crucible.wasm web/public/crucible.wasm
           else
             WASM=$(find zig-out -name "*.wasm" -type f | head -1)
             if [ -n "$WASM" ]; then
-              mkdir -p web/public
               cp "$WASM" web/public/crucible.wasm
               echo "Copied $WASM -> web/public/crucible.wasm"
             else
@@ -59,6 +62,11 @@ jobs:
             fi
           fi
           ls -la web/public/crucible.wasm
+          if command -v strings >/dev/null; then
+            strings web/public/crucible.wasm | grep -q crucible_metric_district || {
+              echo "WARN: crucible_metric_district export not found in strings (may still be fine)"
+            }
+          fi
       - name: Upload crucible.wasm
         uses: actions/upload-artifact@v4
         with:
@@ -90,6 +98,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "No wasm changes"
           else
-            git commit -m "ci: update crucible.wasm (session_slice)"
+            git commit -m "ci: update crucible.wasm (session_slice ABI)"
             git push
           fi
