@@ -100,8 +100,8 @@ pub const Backend = struct {
     pub fn clear(self: Backend, color: Color) void {
         self.vtable.clear(color);
     }
-    pub fn setCamera(self: Backend, cam: Camera) void {
-        self.vtable.setCamera(cam);
+    pub fn setCamera(self: Backend, camera: Camera) void {
+        self.vtable.setCamera(camera);
     }
     pub fn drawGround(self: Backend, size: f32, color: Color) void {
         self.vtable.drawGround(size, color);
@@ -140,6 +140,7 @@ var key_s: bool = false;
 var key_d: bool = false;
 var key_e: bool = false;
 var key_f: bool = false;
+var key_h: bool = false;
 var key_shift: bool = false;
 var key_escape: bool = false;
 var key_space: bool = false;
@@ -163,6 +164,7 @@ pub fn setKey(code: i32, down: bool) void {
         68, 100 => key_d = down,
         69, 101 => key_e = down,
         70, 102 => key_f = down,
+        72, 104 => key_h = down,
         16 => key_shift = down,
         27 => key_escape = down,
         32 => key_space = down,
@@ -195,6 +197,10 @@ pub fn getFrameCount() u64 {
 
 pub fn getDrawCalls() u32 {
     return draw_calls;
+}
+
+pub fn keyH() bool {
+    return key_h;
 }
 
 fn initImpl(title: []const u8, w: u32, h: u32) !void {
