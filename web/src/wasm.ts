@@ -1,4 +1,7 @@
-/** Loader for Crucible WASM (ABI v6). */
+import { createDemoModule } from "./demoSim";
+/**
+ * Loader for Crucible WASM (ABI v6) with pure-JS cloud fallback.
+ */
 
 export interface CrucibleModule {
   crucible_init(width: number, height: number): void;
@@ -99,12 +102,22 @@ function bindAll(exports: Record<string, unknown>): CrucibleModule {
 }
 
 export async function loadCrucible(): Promise<CrucibleModule> {
-  const response = await fetch("/crucible.wasm");
-  if (!response.ok) {
-    throw new Error(`Could not fetch /crucible.wasm (${response.status}). Run: zig build -Dweb=true -Doptimize=ReleaseFast`);
+  try {
+    const response = await fetch("/crucible.wasm");
+    if (response.ok) {
+      const { instance } = await WebAssembly.instantiateStreaming(response, { env: {} });
+      const exports = instance.exports as Record<string, unknown>;
+      if (typeof exports.crucible_version === "function") {
+        const mod = bindAll(exports);
+        console.info("[crucible] WASM loaded, ABI", mod.crucible_version());
+        return mod;
+      }
+    }
+  } catch (e) {
+    console.warn("[crucible] WASM unavailable, using JS demo sim", e);
   }
-  const { instance } = await WebAssembly.instantiateStreaming(response, { env: {} });
-  return bindAll(instance.exports as Record<string, unknown>);
+  console.info("[crucible] Cloud/demo mode — pure JS vertical slice");
+  return createDemoModule();
 }
 
 export function keyEventToCode(e: KeyboardEvent): number {
