@@ -14,39 +14,34 @@ pub fn build(b: *std.Build) void {
     options.addOption(bool, "enable_web", web);
 
     if (web) {
-        // WASM target for the browser host
+        // wasm32-freestanding: executable + -fno-entry -rdynamic so export fns
+        // appear in the .wasm. (addLibrary + .dynamic is unavailable on freestanding.)
         const wasm_target = b.resolveTargetQuery(.{
             .cpu_arch = .wasm32,
             .os_tag = .freestanding,
         });
 
-        const lib = b.addLibrary(.{
+        const exe = b.addExecutable(.{
             .name = "crucible",
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/main_web.zig"),
                 .target = wasm_target,
                 .optimize = optimize,
             }),
-            .linkage = .dynamic, // produces .wasm
         });
-        lib.root_module.addOptions("build_options", options);
+        exe.entry = .disabled;
+        exe.rdynamic = true;
+        exe.root_module.addOptions("build_options", options);
+        // Optional include path for upstream sources when submodule is present.
+        exe.root_module.addIncludePath(b.path("vendor/empire-and-kin/src"));
 
-        // Point at the Empire & Kin submodule so the same game sources are used.
-        // Adjust path if your submodule lives elsewhere.
-        lib.root_module.addIncludePath(b.path("vendor/empire-and-kin/src"));
+        b.installArtifact(exe);
 
-        // TODO: once the full game is wired, add the game modules as imports
-        // and implement the WebGL backend that satisfies the Backend VTable.
-
-        b.installArtifact(lib);
-
-        // Convenience step
-        const install_wasm = b.addInstallArtifact(lib, .{
+        const install_wasm = b.addInstallArtifact(exe, .{
             .dest_dir = .{ .override = .{ .custom = "web/public" } },
         });
         b.step("wasm", "Build crucible.wasm into web/public").dependOn(&install_wasm.step);
     } else {
-        // Non-web fallback: simple native stub for local experimentation
         const exe = b.addExecutable(.{
             .name = "crucible-native",
             .root_module = b.createModule(.{
